@@ -20,7 +20,7 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from torch.utils.checkpoint import checkpoint as torch_checkpoint
-from xformers import ops
+from xformers import xformers
 
 from .rope import RotaryEmbedding
 from .streaming import StreamingModule
@@ -45,7 +45,7 @@ def _get_attention_time_dimension(memory_efficient: bool) -> int:
 def _is_profiled() -> bool:
     # Return true if we are currently running with a xformers profiler activated.
     try:
-        from xformers.profiler import profiler
+        from xformers.xformers.profiler import profiler
     except ImportError:
         return False
     return profiler._Profiler._CURRENT_PROFILER is not None
@@ -236,7 +236,7 @@ class StreamingMultiheadAttention(StreamingModule):
         # convention both in the builtin MHA in Pytorch, and Xformers functions.
         time_dim = _get_attention_time_dimension(self.memory_efficient)
         if self.memory_efficient:
-            from xformers.ops import LowerTriangularMask
+            from xformers.xformers.ops import LowerTriangularMask
             if current_steps == 1:
                 # If we only have one step, then we do not need a mask.
                 return None
@@ -371,7 +371,7 @@ class StreamingMultiheadAttention(StreamingModule):
                     else:
                         bound_layout = "b t p h d"
                     packed = rearrange(projected, f"b t (p h d) -> {bound_layout}", p=3, h=self.num_heads)
-                    q, k, v = ops.unbind(packed, dim=2)
+                    q, k, v = xformers.ops.unbind(packed, dim=2)
                 else:
                     embed_dim = self.embed_dim
                     per_head_dim = (embed_dim // self.num_heads)
@@ -413,7 +413,7 @@ class StreamingMultiheadAttention(StreamingModule):
                     x = torch.nn.functional.scaled_dot_product_attention(
                         q, k, v, is_causal=attn_mask is not None, dropout_p=p)
                 else:
-                    x = ops.memory_efficient_attention(q, k, v, attn_mask, p=p)
+                    x = xformers.ops.memory_efficient_attention(q, k, v, attn_mask, p=p)
             else:
                 # We include the dot product as float32, for consistency
                 # with the other implementations that include that step
@@ -666,7 +666,7 @@ class StreamingTransformer(StreamingModule):
         elif method == 'torch':
             return torch_checkpoint(layer, *args, use_reentrant=False, **kwargs)
         elif method.startswith('xformers'):
-            from xformers.checkpoint_fairinternal import checkpoint, _get_default_policy
+            from xformers.xformers.checkpoint import checkpoint, _get_default_policy
             if method == 'xformers_default':
                 # those operations will be saved, and not recomputed.
                 # According to Francisco we can get smarter policies but this is a good start.
@@ -725,7 +725,7 @@ class StreamingTransformer(StreamingModule):
 
 def _verify_xformers_memory_efficient_compat():
     try:
-        from xformers.ops import memory_efficient_attention, LowerTriangularMask  # noqa
+        from xformers.xformers.ops import memory_efficient_attention, LowerTriangularMask  # noqa
     except ImportError:
         raise ImportError(
             "xformers is not installed. Please install it and try again.\n"
@@ -739,7 +739,7 @@ def _verify_xformers_memory_efficient_compat():
 
 def _verify_xformers_internal_compat():
     try:
-        from xformers.checkpoint_fairinternal import checkpoint, _get_default_policy  # noqa
+        from xformers.xformers.checkpoint import checkpoint, _get_default_policy  # noqa
     except ImportError:
         raise ImportError(
             "Francisco's fairinternal xformers is not installed. Please install it and try again.\n"
